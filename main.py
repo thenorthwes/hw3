@@ -1,3 +1,4 @@
+import time
 from copy import deepcopy
 from math import inf
 
@@ -20,8 +21,13 @@ I_ORG = "I-ORG"
 
 NER_SET = [O_TAG, B_MISC, I_MISC, B_PER, I_PER, B_LOC, I_LOC, B_ORG, I_ORG]
 pos = {}
+sc = {}
+wd = {}
 global_feature_counter = 1
 
+POS_FEATURE_ON = True
+SC_FEATURE_ON = True
+WORD_NRE_ON = True
 
 def estimate_sentence(sentence, weight_vector):
     viterbi_table = []
@@ -34,18 +40,14 @@ def estimate_sentence(sentence, weight_vector):
         word_tuple = sentence[i]
         word = word_tuple[0]
         part_of_spch = word_tuple[1]
+        syntatic_chunk = word_tuple[2]
         correct_ner = word_tuple[3]
         viterbi_table.append([word, {}])  # Add a new col for each word Header is the word, dict for NERs
 
         # For every NER Tag
         for ner in NER_SET:
-            words_feature_dict = {}
             # Words feature dict ends up with feature#, 1 for all features found about this word
-
-            # TODO Make a function -- get features for a word / NER
-            # POS
-            words_feature_dict[pos[part_of_spch + ner]] = 1
-            # TODO Above
+            words_feature_dict = get_features_for_word(ner, word, part_of_spch, syntatic_chunk)
 
             if correct_ner == ner:
                 features_list_gold.append(words_feature_dict)
@@ -55,7 +57,7 @@ def estimate_sentence(sentence, weight_vector):
             feature_pi = 0
             for feature in words_feature_dict.keys():
                 # features are feature index, and then 1 {17, 1}, {12, 1} -- etc
-                feature_pi = weight_vector[feature] * words_feature_dict[feature]
+                feature_pi = (weight_vector[feature] * words_feature_dict[feature]) + feature_pi
             # For every NER -- fill our pi for the NER tag
             final_pi = 0
             prev_tag = None
@@ -96,6 +98,18 @@ def estimate_sentence(sentence, weight_vector):
     return tag_stack, features_list_viterbi, features_list_gold
 
 
+# Words feature dict ends up with feature#, 1 for all features found about this word
+def get_features_for_word(ner, word, part_of_spch, syntatic_chnk) -> dict:
+    words_feature_dict = {}
+    if WORD_NRE_ON:
+        words_feature_dict[wd[word+ner]] = 1
+    if POS_FEATURE_ON:
+        words_feature_dict[pos[part_of_spch + ner]] = 1
+    if SC_FEATURE_ON:
+        words_feature_dict[sc[syntatic_chnk + ner]] = 1
+    return words_feature_dict
+
+
 def add_to_output(output, sentence, estimated_sequence):
     line = "{}\t{}\t{}\t{}\t{}"
     for i in range(len(sentence)):
@@ -106,7 +120,6 @@ def add_to_output(output, sentence, estimated_sequence):
 
 
 def startPerceptronCycles(featureVector):
-    output = open(OUTPUT, "w")
     training_sentences = []
     # make an array to work with
     with open(ENG_S_TRAIN, "r") as training_data:
@@ -127,53 +140,79 @@ def startPerceptronCycles(featureVector):
 
     #  for every feature we have turned on -- make up a random weight to start with
     weight_vector = np.random.randint(-101, 101, global_feature_counter)
-    weight_vector = weight_vector / 100
+    weight_vector = weight_vector
     weight_history = []
     weight_history.append(weight_vector)  # Capture the first one
     # How many iterations
-    for someloops in range(1):
+    for someloops in range(1, 101):
+        if someloops % 15 == 0:
+            end = "\t\t{}\n".format(time.process_time(),2)
+            output = open(OUTPUT+str(someloops), "w")
+            for sentence in training_sentences:
+                viterbi_result = estimate_sentence(sentence, weight_vector)
+                estimated_sequence = viterbi_result[0]
+                add_to_output(output, sentence, estimated_sequence)
+            output.close()
+        else:
+            end = ""
+        print(".", end=end)
         for sentence in training_sentences:
             viterbi_result = estimate_sentence(sentence, weight_vector)
             estimated_sequence = viterbi_result[0]
             correct_seq = np.array([(sentence[x][3]) for x in range(len(sentence))])
-            print(correct_seq)
-            print(estimated_sequence)
+
             # Test does our estimated Seq = the real seq?
             if np.array_equal(correct_seq, estimated_sequence):
-                print("Yahoo -- NOP")
+                nop = 1
             else:
-                print("update weights")
-                for v_vector_list in viterbi_result[1]:
+                for v_vector_list in viterbi_result[1]: # Weight down for bad
                     for v in v_vector_list:
                         weight_vector[v] -= v_vector_list[v]
-                for g_vector_list in viterbi_result[2]:  # Weight up
+                for g_vector_list in viterbi_result[2]:  # Weight up for good ones
                     for g in g_vector_list:
                         weight_vector[g] += g_vector_list[g]
-                weight_history.append(deepcopy(weight_vector))  # track history for average
 
     # do once when we are satisfied with our training
+    outputFinal = open(OUTPUT, "w")
     for sentence in training_sentences:
         viterbi_result = estimate_sentence(sentence, weight_vector)
         estimated_sequence = viterbi_result[0]
-        add_to_output(output, sentence, estimated_sequence)
-    output.close()
+        add_to_output(outputFinal, sentence, estimated_sequence)
+    outputFinal.close()
 
 
 def extract_features(training_sentences):
     # Turn on Features
     global global_feature_counter
     partsOfSpeech = {}
+    syntaticChunk = {}
+    words = {}
     for sentence in training_sentences:
         for word_tuple in sentence:
             part_of_speech = word_tuple[1]
             partsOfSpeech[part_of_speech] = 1
+            sychunk = word_tuple[2]
+            syntaticChunk[sychunk] = 1
+            word = word_tuple[0]
+            words[word] = 1
 
     # Contextualize features by NERs
     for ner in NER_SET:
-        for p in partsOfSpeech:
-            # Results in something like NNPB-ORG | feature_index
-            pos[p + ner] = global_feature_counter
-            global_feature_counter += 1
+        if POS_FEATURE_ON:
+            for p in partsOfSpeech:
+                # Results in something like NNPB-ORG | feature_index
+                pos[p + ner] = global_feature_counter
+                global_feature_counter += 1
+        if SC_FEATURE_ON:
+            for s in syntaticChunk:
+                # Results in something like I-NPB-ORG
+                sc[s + ner] = global_feature_counter
+                global_feature_counter += 1
+        if WORD_NRE_ON:
+            for w in words:
+                # Results in something like WORDB-ORG
+                wd[w + ner] = global_feature_counter
+                global_feature_counter += 1
 
 
 def start():
