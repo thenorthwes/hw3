@@ -1,3 +1,4 @@
+from copy import deepcopy
 from math import inf
 
 import numpy as np
@@ -17,7 +18,7 @@ I_LOC = "I-LOC"
 B_ORG = "B-ORG"
 I_ORG = "I-ORG"
 
-NER_SET = [O_TAG, B_MISC, I_MISC, B_PER, I_PER, B_ORG, I_ORG, B_LOC, I_LOC, B_ORG, I_ORG]
+NER_SET = [O_TAG, B_MISC, I_MISC, B_PER, I_PER, B_LOC, I_LOC, B_ORG, I_ORG]
 pos = {}
 global_feature_counter = 1
 
@@ -25,23 +26,32 @@ global_feature_counter = 1
 def estimate_sentence(sentence, weight_vector):
     viterbi_table = []
     tag_stack = []
-    features_list = []
+    features_list_viterbi = []
+    features_list_gold = []
+
+    # for every word
     for i in range(len(sentence)):
         word_tuple = sentence[i]
         word = word_tuple[0]
         part_of_spch = word_tuple[1]
+        correct_ner = word_tuple[3]
         viterbi_table.append([word, {}])  # Add a new col for each word Header is the word, dict for NERs
-        words_feature_dict = {}
 
-        # Words feature dict ends up with feature#, 1 for all features found about this word
-        # POS
-        words_feature_dict[pos[part_of_spch]] = 1
-        # Print which feature is on and the bin val of on
-        # print(words_feature_dict)
-        # for feature in words_feature_dict.keys():
-        #     print("Feature on {}, weight {}".format(feature, weight_vector[feature]))
-        features_list.append(words_feature_dict)
+        # For every NER Tag
         for ner in NER_SET:
+            words_feature_dict = {}
+            # Words feature dict ends up with feature#, 1 for all features found about this word
+
+            # TODO Make a function -- get features for a word / NER
+            # POS
+            words_feature_dict[pos[part_of_spch + ner]] = 1
+            # TODO Above
+
+            if correct_ner == ner:
+                features_list_gold.append(words_feature_dict)
+
+            # the features for this NER selected with this viterbi is pushed into the table
+
             feature_pi = 0
             for feature in words_feature_dict.keys():
                 # features are feature index, and then 1 {17, 1}, {12, 1} -- etc
@@ -62,24 +72,28 @@ def estimate_sentence(sentence, weight_vector):
                         prev_node = prev_ner
                 final_pi = max_pi
                 prev_tag = prev_node
-            viterbi_table[i][1][ner] = (final_pi, prev_tag)
-        #print(viterbi_table[i])
+            viterbi_table[i][1][ner] = (final_pi, prev_tag, words_feature_dict)
+        # print(viterbi_table[i])
 
-    backindex = len(sentence)-1
+    backindex = len(sentence) - 1
     # walk backwards
-    backpointer = max(viterbi_table[backindex][1].items(), key=lambda point: point[1][0])[0]
+    cell = max(viterbi_table[backindex][1].items(), key=lambda point: point[1][0])
+    backpointer = cell[0]
     tag_stack.append(backpointer)
-    while True:  ## stop when we get to the first col with break
-        #print(viterbi_table[backindex][0])
+    # Append the features that gave us this cell
+    features_list_viterbi.append(cell[1][2])
+    while True:  # stop when we get to the first col with break
+        # print(viterbi_table[backindex][0])
         backpointer = viterbi_table[backindex][1][backpointer][1]
         if backpointer is None:
             break
+        features_list_viterbi.append(viterbi_table[backindex][1][backpointer][2])
         tag_stack.append(backpointer)
         backindex -= 1
     tag_stack.reverse()
+    features_list_viterbi.reverse()  # doesnt matter but yah know whatever
 
-    # Write to output
-    return tag_stack, features_list, {"Supposed to be the Φ(xi, yi)"}
+    return tag_stack, features_list_viterbi, features_list_gold
 
 
 def add_to_output(output, sentence, estimated_sequence):
@@ -115,6 +129,7 @@ def startPerceptronCycles(featureVector):
     weight_vector = np.random.randint(-101, 101, global_feature_counter)
     weight_vector = weight_vector / 100
     weight_history = []
+    weight_history.append(weight_vector)  # Capture the first one
     # How many iterations
     for someloops in range(1):
         for sentence in training_sentences:
@@ -125,10 +140,16 @@ def startPerceptronCycles(featureVector):
             print(estimated_sequence)
             # Test does our estimated Seq = the real seq?
             if np.array_equal(correct_seq, estimated_sequence):
-                print("Yahoo")
+                print("Yahoo -- NOP")
             else:
-                weight_history.append(weight_vector) # track history for average
                 print("update weights")
+                for v_vector_list in viterbi_result[1]:
+                    for v in v_vector_list:
+                        weight_vector[v] -= v_vector_list[v]
+                for g_vector_list in viterbi_result[2]:  # Weight up
+                    for g in g_vector_list:
+                        weight_vector[g] += g_vector_list[g]
+                weight_history.append(deepcopy(weight_vector))  # track history for average
 
     # do once when we are satisfied with our training
     for sentence in training_sentences:
@@ -141,13 +162,18 @@ def startPerceptronCycles(featureVector):
 def extract_features(training_sentences):
     # Turn on Features
     global global_feature_counter
+    partsOfSpeech = {}
     for sentence in training_sentences:
         for word_tuple in sentence:
-
             part_of_speech = word_tuple[1]
-            if part_of_speech not in pos.keys():
-                pos[part_of_speech] = global_feature_counter
-                global_feature_counter = global_feature_counter + 1
+            partsOfSpeech[part_of_speech] = 1
+
+    # Contextualize features by NERs
+    for ner in NER_SET:
+        for p in partsOfSpeech:
+            # Results in something like NNPB-ORG | feature_index
+            pos[p + ner] = global_feature_counter
+            global_feature_counter += 1
 
 
 def start():
