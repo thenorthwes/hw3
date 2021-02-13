@@ -23,11 +23,19 @@ NER_SET = [O_TAG, B_MISC, I_MISC, B_PER, I_PER, B_LOC, I_LOC, B_ORG, I_ORG]
 pos = {}
 sc = {}
 wd = {}
+st = {}
+en = {}
+cap = {}
+
 global_feature_counter = 1
 
 POS_FEATURE_ON = True
 SC_FEATURE_ON = True
 WORD_NRE_ON = True
+START_NRE_ON = True
+END_NRE_ON = True
+CAP_NRE_ON = True
+
 
 def estimate_sentence(sentence, weight_vector):
     viterbi_table = []
@@ -47,7 +55,8 @@ def estimate_sentence(sentence, weight_vector):
         # For every NER Tag
         for ner in NER_SET:
             # Words feature dict ends up with feature#, 1 for all features found about this word
-            words_feature_dict = get_features_for_word(ner, word, part_of_spch, syntatic_chunk)
+            words_feature_dict = get_features_for_word(ner, word, part_of_spch, syntatic_chunk, i == 0,
+                                                       i + 1 == len(sentence))
 
             if correct_ner == ner:
                 features_list_gold.append(words_feature_dict)
@@ -99,14 +108,29 @@ def estimate_sentence(sentence, weight_vector):
 
 
 # Words feature dict ends up with feature#, 1 for all features found about this word
-def get_features_for_word(ner, word, part_of_spch, syntatic_chnk) -> dict:
+def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent, end_of_sent) -> dict:
     words_feature_dict = {}
     if WORD_NRE_ON:
-        words_feature_dict[wd[word+ner]] = 1
+        words_feature_dict[wd[word + ner]] = 1
     if POS_FEATURE_ON:
         words_feature_dict[pos[part_of_spch + ner]] = 1
     if SC_FEATURE_ON:
         words_feature_dict[sc[syntatic_chnk + ner]] = 1
+    if START_NRE_ON:
+        if start_of_sent:
+            words_feature_dict[st["ST_TRUE" + ner]] = 1
+        else:
+            words_feature_dict[st["ST_FALSE" + ner]] = 1
+    if END_NRE_ON:
+        if end_of_sent:
+            words_feature_dict[en["END_TRUE" + ner]] = 1
+        else:
+            words_feature_dict[en["END_FALSE" + ner]] = 1
+    if CAP_NRE_ON:
+        if word[0].isupper():
+            words_feature_dict[cap["CAP_TRUE" + ner]] = 1
+        else:
+            words_feature_dict[cap["CAP_FALSE" + ner]] = 1
     return words_feature_dict
 
 
@@ -146,8 +170,8 @@ def startPerceptronCycles(featureVector):
     # How many iterations
     for someloops in range(1, 101):
         if someloops % 15 == 0:
-            end = "\t\t{}\n".format(time.process_time(),2)
-            output = open(OUTPUT+str(someloops), "w")
+            end = "\t\t{}\n".format(time.process_time(), 2)
+            output = open(OUTPUT + str(someloops), "w")
             for sentence in training_sentences:
                 viterbi_result = estimate_sentence(sentence, weight_vector)
                 estimated_sequence = viterbi_result[0]
@@ -165,7 +189,7 @@ def startPerceptronCycles(featureVector):
             if np.array_equal(correct_seq, estimated_sequence):
                 nop = 1
             else:
-                for v_vector_list in viterbi_result[1]: # Weight down for bad
+                for v_vector_list in viterbi_result[1]:  # Weight down for bad
                     for v in v_vector_list:
                         weight_vector[v] -= v_vector_list[v]
                 for g_vector_list in viterbi_result[2]:  # Weight up for good ones
@@ -213,6 +237,21 @@ def extract_features(training_sentences):
                 # Results in something like WORDB-ORG
                 wd[w + ner] = global_feature_counter
                 global_feature_counter += 1
+        if START_NRE_ON:
+            st["ST_TRUE" + ner] = global_feature_counter
+            global_feature_counter += 1
+            st["ST_FALSE" + ner] = global_feature_counter
+            global_feature_counter += 1
+        if END_NRE_ON:
+            en["END_TRUE" + ner] = global_feature_counter
+            global_feature_counter += 1
+            en["END_FALSE" + ner] = global_feature_counter
+            global_feature_counter += 1
+        if CAP_NRE_ON:
+            cap["CAP_TRUE" + ner] = global_feature_counter
+            global_feature_counter += 1
+            cap["CAP_FALSE" + ner] = global_feature_counter
+            global_feature_counter += 1
 
 
 def start():
