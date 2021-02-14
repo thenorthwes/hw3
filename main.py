@@ -6,7 +6,7 @@ import numpy as np
 
 ENG_S_TRAIN = "./files/conll03_ner/eng.train.small"
 ENG_S_DEV = "./files/conll03_ner/eng.dev.small"
-ENG_S_TEST = "./files/conll03_ner/eng.NOTYET.small"
+ENG_S_TEST = "./files/conll03_ner/eng.test.small"
 OUTPUT = "./files/out/output.txt"
 
 O_TAG = "O"
@@ -35,6 +35,8 @@ WORD_NRE_ON = True
 START_NRE_ON = True
 END_NRE_ON = True
 CAP_NRE_ON = True
+
+PRINT_INTERVALS = False
 
 
 def estimate_sentence(sentence, weight_vector):
@@ -110,11 +112,11 @@ def estimate_sentence(sentence, weight_vector):
 # Words feature dict ends up with feature#, 1 for all features found about this word
 def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent, end_of_sent) -> dict:
     words_feature_dict = {}
-    if WORD_NRE_ON:
+    if WORD_NRE_ON and (word+ner) in wd.keys():
         words_feature_dict[wd[word + ner]] = 1
-    if POS_FEATURE_ON:
+    if POS_FEATURE_ON and (part_of_spch + ner) in pos.keys():
         words_feature_dict[pos[part_of_spch + ner]] = 1
-    if SC_FEATURE_ON:
+    if SC_FEATURE_ON and (syntatic_chnk+ner) in sc.keys():
         words_feature_dict[sc[syntatic_chnk + ner]] = 1
     if START_NRE_ON:
         if start_of_sent:
@@ -143,40 +145,27 @@ def add_to_output(output, sentence, estimated_sequence):
     output.write("\n")
 
 
-def startPerceptronCycles(featureVector):
-    training_sentences = []
+def startPerceptronCycles():
     # make an array to work with
-    with open(ENG_S_TRAIN, "r") as training_data:
-        tagged_word = training_data.readline()
-        sentence = []
-        while tagged_word:
-            word_tag_array = tagged_word.split()
-            word_tag_tuple = (word_tag_array[0], word_tag_array[1], word_tag_array[2], word_tag_array[3])
-            sentence.append(word_tag_tuple)
-            tagged_word = training_data.readline()
-            if tagged_word == "\n":
-                training_sentences.append(sentence)
-                sentence = []
-                tagged_word = training_data.readline()
-        print("End of file")
-
+    training_sentences = get_sentences_as_array(ENG_S_TRAIN)
     extract_features(training_sentences)
 
     #  for every feature we have turned on -- make up a random weight to start with
     weight_vector = np.random.randint(-101, 101, global_feature_counter)
     weight_vector = weight_vector
-    weight_history = []
-    weight_history.append(weight_vector)  # Capture the first one
+    weight_avg = deepcopy(weight_vector)
+    weight_update_counter = 1
     # How many iterations
-    for someloops in range(1, 101):
-        if someloops % 15 == 0:
+    for someloops in range(1, 151):
+        if someloops % 5 == 0:
             end = "\t\t{}\n".format(time.process_time(), 2)
-            output = open(OUTPUT + str(someloops), "w")
-            for sentence in training_sentences:
-                viterbi_result = estimate_sentence(sentence, weight_vector)
-                estimated_sequence = viterbi_result[0]
-                add_to_output(output, sentence, estimated_sequence)
-            output.close()
+            if PRINT_INTERVALS:
+                output = open(OUTPUT + str(someloops), "w")
+                for sentence in training_sentences:
+                    viterbi_result = estimate_sentence(sentence, weight_vector)
+                    estimated_sequence = viterbi_result[0]
+                    add_to_output(output, sentence, estimated_sequence)
+                output.close()
         else:
             end = ""
         print(".", end=end)
@@ -195,6 +184,28 @@ def startPerceptronCycles(featureVector):
                 for g_vector_list in viterbi_result[2]:  # Weight up for good ones
                     for g in g_vector_list:
                         weight_vector[g] += g_vector_list[g]
+                weight_update_counter += 1
+                weight_avg = np.add(weight_avg, weight_vector)
+
+    # Evaluate on Dev
+    dev_sentences = get_sentences_as_array(ENG_S_DEV)
+    #
+    outputDev = open(OUTPUT+"dev", "w")
+    for sentence in dev_sentences:
+        viterbi_result = estimate_sentence(sentence, weight_avg)
+        estimated_sequence = viterbi_result[0]
+        add_to_output(outputDev, sentence, estimated_sequence)
+    outputDev.close()
+
+    # Evaluate on Dev
+    test_sentences = get_sentences_as_array(ENG_S_TEST)
+    #
+    outputTest = open(OUTPUT + "test", "w")
+    for sentence in test_sentences:
+        viterbi_result = estimate_sentence(sentence, weight_avg)
+        estimated_sequence = viterbi_result[0]
+        add_to_output(outputTest, sentence, estimated_sequence)
+    outputTest.close()
 
     # do once when we are satisfied with our training
     outputFinal = open(OUTPUT, "w")
@@ -203,6 +214,23 @@ def startPerceptronCycles(featureVector):
         estimated_sequence = viterbi_result[0]
         add_to_output(outputFinal, sentence, estimated_sequence)
     outputFinal.close()
+
+
+def get_sentences_as_array(path):
+    sent = []
+    with open(path, "r") as data:
+        tagged_word = data.readline()
+        sentence = []
+        while tagged_word:
+            word_tag_array = tagged_word.split()
+            word_tag_tuple = (word_tag_array[0], word_tag_array[1], word_tag_array[2], word_tag_array[3])
+            sentence.append(word_tag_tuple)
+            tagged_word = data.readline()
+            if tagged_word == "\n":
+                sent.append(sentence)
+                sentence = []
+                tagged_word = data.readline()
+    return sent
 
 
 def extract_features(training_sentences):
@@ -255,16 +283,9 @@ def extract_features(training_sentences):
 
 
 def start():
-    # Define feature vectors
-    featureVector = ['pos: {}']
-    # 'shape:{} {}'.format(shape, cur),
-    # 'pos:{} {}'.format(pos, cur),
-    # 'sc:{} {}'.format(sc, cur),
-    # 'prefix:{} {}'.format(prefix, cur),
-    # 'suffix:{} {}'.format(suffix, cur)]
-    print(featureVector)
-    # define weight vector and initiatlize
-    startPerceptronCycles(featureVector)
+    print("HW 3")
+    startPerceptronCycles()
+    print("HW3 Complete in: {} sec.".format(time.process_time(),3))
 
 
 # start of HW 3
