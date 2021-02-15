@@ -39,6 +39,11 @@ CAP_NRE_ON = True
 PRINT_INTERVALS = False
 
 
+# Viterbi algorithm for estimating sequence
+# Input is a sentence tuple array
+# weight vector is the current weight vector
+# Single table is used and each cell is a tuple that tracks all the info, what features were on, what previous NER
+# Tag got us to this cell etc... this way we can can reconstruct the feature set and tags that got us to the end
 def estimate_sentence(sentence, weight_vector):
     viterbi_table = []
     tag_stack = []
@@ -86,7 +91,6 @@ def estimate_sentence(sentence, weight_vector):
                 final_pi = max_pi
                 prev_tag = prev_node
             viterbi_table[i][1][ner] = (final_pi, prev_tag, words_feature_dict)
-        # print(viterbi_table[i])
 
     backindex = len(sentence) - 1
     # walk backwards
@@ -110,6 +114,8 @@ def estimate_sentence(sentence, weight_vector):
 
 
 # Words feature dict ends up with feature#, 1 for all features found about this word
+#  that feature number is the index to be used in the weight array
+# For now, really just using 1s for freature sets...
 def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent, end_of_sent) -> dict:
     words_feature_dict = {}
     if WORD_NRE_ON and (word+ner) in wd.keys():
@@ -135,7 +141,7 @@ def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent,
             words_feature_dict[cap["CAP_FALSE" + ner]] = 1
     return words_feature_dict
 
-
+# Write to out put for perl script
 def add_to_output(output, sentence, estimated_sequence):
     line = "{}\t{}\t{}\t{}\t{}"
     for i in range(len(sentence)):
@@ -146,8 +152,15 @@ def add_to_output(output, sentence, estimated_sequence):
 
 
 def startPerceptronCycles():
-    # make an array to work with
+    # make an array of sentences to work with
+    # training file is merged into an array of arrays.
+    # top level array -- each item is a sentence
+    # That sentence is an array of tuples
+    # Each tuple is a a tagged word (WORD, PART OF SPEECH, SYNTACTIC CHUNK, NER TAG)
     training_sentences = get_sentences_as_array(ENG_S_TRAIN)
+
+    # extract features from our templates
+    # Boolean flags are available to turn on / off
     extract_features(training_sentences)
 
     #  for every feature we have turned on -- make up a random weight to start with
@@ -155,11 +168,12 @@ def startPerceptronCycles():
     weight_vector = weight_vector
     weight_avg = deepcopy(weight_vector)
     weight_update_counter = 1
-    # How many iterations
+    # How many iterations of perceptron should we run
+    # after experimental evidence, 150~ seemed to achieve stability
     for someloops in range(1, 151):
-        if someloops % 5 == 0:
+        if someloops % 5 == 0:  # Print out evidence of progress so we don't bored
             end = "\t\t{}\n".format(time.process_time(), 2)
-            if PRINT_INTERVALS:
+            if PRINT_INTERVALS:  # This flag will print out incremental results to produce learning curve
                 output = open(OUTPUT + str(someloops), "w")
                 for sentence in training_sentences:
                     viterbi_result = estimate_sentence(sentence, weight_vector)
@@ -169,24 +183,33 @@ def startPerceptronCycles():
         else:
             end = ""
         print(".", end=end)
+
+        # For every sentence in the file
         for sentence in training_sentences:
+            # Use viterbi to estimate NER sequence
+            # Result is a tuple with the estimated Sequence, the estimated features, and the gold features
             viterbi_result = estimate_sentence(sentence, weight_vector)
             estimated_sequence = viterbi_result[0]
+
+            # Fetch the correct sequence off the sentence
             correct_seq = np.array([(sentence[x][3]) for x in range(len(sentence))])
 
             # Test does our estimated Seq = the real seq?
             if np.array_equal(correct_seq, estimated_sequence):
-                nop = 1
-            else:
+                nop = 1  # For readability -- No operation
+            else:  # Didnt match? Then do update
                 for v_vector_list in viterbi_result[1]:  # Weight down for bad
                     for v in v_vector_list:
                         weight_vector[v] -= v_vector_list[v]
                 for g_vector_list in viterbi_result[2]:  # Weight up for good ones
                     for g in g_vector_list:
                         weight_vector[g] += g_vector_list[g]
+                # Increment our denominator for tracking
                 weight_update_counter += 1
                 weight_avg = np.add(weight_avg, weight_vector)
 
+    # Avg Weights to prevent overfitting
+    weight_avg = np.divide(weight_avg, weight_update_counter)
     # Evaluate on Dev
     dev_sentences = get_sentences_as_array(ENG_S_DEV)
     #
@@ -215,7 +238,9 @@ def startPerceptronCycles():
         add_to_output(outputFinal, sentence, estimated_sequence)
     outputFinal.close()
 
-
+# Get all the sentences from a file as an array of sentence arrays where each item is a tuple
+# [ ] [ ] [ ] [ a ]   <-- Sentences
+# [ a ] = [(word, pos, sc, NER), (etc)]
 def get_sentences_as_array(path):
     sent = []
     with open(path, "r") as data:
@@ -232,7 +257,9 @@ def get_sentences_as_array(path):
                 tagged_word = data.readline()
     return sent
 
-
+# All features are contextualized by an NER tag -- global feature value is tracked
+# that global feature number is the index in the weight vectory
+# When we get features of a word -- we turn them on by turning on the index
 def extract_features(training_sentences):
     # Turn on Features
     global global_feature_counter
@@ -284,6 +311,7 @@ def extract_features(training_sentences):
 
 def start():
     print("HW 3")
+    # This is really where the whole app takes place
     startPerceptronCycles()
     print("HW3 Complete in: {} sec.".format(time.process_time(),3))
 
