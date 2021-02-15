@@ -21,11 +21,14 @@ I_ORG = "I-ORG"
 
 NER_SET = [O_TAG, B_MISC, I_MISC, B_PER, I_PER, B_LOC, I_LOC, B_ORG, I_ORG]
 pos = {}
+ppos = {}
 sc = {}
 wd = {}
 st = {}
 en = {}
 cap = {}
+l3 = {}
+pwd = {}
 
 global_feature_counter = 1
 
@@ -35,6 +38,9 @@ WORD_NRE_ON = True
 START_NRE_ON = True
 END_NRE_ON = True
 CAP_NRE_ON = True
+LAST_3_CHARS = True
+PREV_POS = False
+PREV_WORD = True
 
 PRINT_INTERVALS = False
 
@@ -50,6 +56,11 @@ def estimate_sentence(sentence, weight_vector):
         word_tuple = sentence[i]
         word = word_tuple[0]
         part_of_spch = word_tuple[1]
+        prev_part_of_spch = None
+        prev_word = None
+        if i != 0:
+            prev_part_of_spch = sentence[i - 1][1]
+            prev_word = sentence[i-1][0]
         syntatic_chunk = word_tuple[2]
         correct_ner = word_tuple[3]
         viterbi_table.append([word, {}])  # Add a new col for each word Header is the word, dict for NERs
@@ -58,7 +69,7 @@ def estimate_sentence(sentence, weight_vector):
         for ner in NER_SET:
             # Words feature dict ends up with feature#, 1 for all features found about this word
             words_feature_dict = get_features_for_word(ner, word, part_of_spch, syntatic_chunk, i == 0,
-                                                       i + 1 == len(sentence))
+                                                       i + 1 == len(sentence), prev_part_of_spch, prev_word)
 
             if correct_ner == ner:
                 features_list_gold.append(words_feature_dict)
@@ -110,13 +121,20 @@ def estimate_sentence(sentence, weight_vector):
 
 
 # Words feature dict ends up with feature#, 1 for all features found about this word
-def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent, end_of_sent) -> dict:
+def get_features_for_word(ner, word, part_of_spch, syntatic_chnk, start_of_sent, end_of_sent, prev_pt_of_spch,
+                          prev_wd) -> dict:
     words_feature_dict = {}
-    if WORD_NRE_ON and (word+ner) in wd.keys():
+    if WORD_NRE_ON and (word + ner) in wd.keys():
         words_feature_dict[wd[word + ner]] = 1
+    if PREV_WORD and prev_wd is not None and ("prev" + prev_wd + ner) in pwd.keys() :
+        words_feature_dict[pwd["prev" + prev_wd + ner]] = 1
+    if LAST_3_CHARS and (word[-3:] + ner) in l3.keys():
+        words_feature_dict[l3[word[-3:] + ner]] = 1
     if POS_FEATURE_ON and (part_of_spch + ner) in pos.keys():
         words_feature_dict[pos[part_of_spch + ner]] = 1
-    if SC_FEATURE_ON and (syntatic_chnk+ner) in sc.keys():
+    if PREV_POS and prev_pt_of_spch is not None and (part_of_spch + ner) in pos.keys():
+        words_feature_dict[ppos["prev" + prev_pt_of_spch + ner]] = 1
+    if SC_FEATURE_ON and (syntatic_chnk + ner) in sc.keys():
         words_feature_dict[sc[syntatic_chnk + ner]] = 1
     if START_NRE_ON:
         if start_of_sent:
@@ -158,7 +176,7 @@ def startPerceptronCycles():
     # How many iterations
     for someloops in range(1, 151):
         if someloops % 5 == 0:
-            end = "\t\t{}\n".format(time.process_time(), 2)
+            end = "\t\t{}\t{}/150\n".format(time.process_time(), someloops)
             if PRINT_INTERVALS:
                 output = open(OUTPUT + str(someloops), "w")
                 for sentence in training_sentences:
@@ -190,7 +208,7 @@ def startPerceptronCycles():
     # Evaluate on Dev
     dev_sentences = get_sentences_as_array(ENG_S_DEV)
     #
-    outputDev = open(OUTPUT+"dev", "w")
+    outputDev = open(OUTPUT + "dev", "w")
     for sentence in dev_sentences:
         viterbi_result = estimate_sentence(sentence, weight_avg)
         estimated_sequence = viterbi_result[0]
@@ -255,6 +273,11 @@ def extract_features(training_sentences):
                 # Results in something like NNPB-ORG | feature_index
                 pos[p + ner] = global_feature_counter
                 global_feature_counter += 1
+        if PREV_POS:
+            for p in partsOfSpeech:
+                # Results in something like NNPB-ORG | feature_index
+                ppos["prev" + p + ner] = global_feature_counter
+                global_feature_counter += 1
         if SC_FEATURE_ON:
             for s in syntaticChunk:
                 # Results in something like I-NPB-ORG
@@ -264,6 +287,16 @@ def extract_features(training_sentences):
             for w in words:
                 # Results in something like WORDB-ORG
                 wd[w + ner] = global_feature_counter
+                global_feature_counter += 1
+        if PREV_WORD:
+            for w in words:
+                # Results in something like WORDB-ORG
+                pwd["prev" + w + ner] = global_feature_counter
+                global_feature_counter += 1
+        if LAST_3_CHARS:
+            for w in words:
+                # Results in something like ORDB-ORG
+                l3[w[-3:] + ner] = global_feature_counter
                 global_feature_counter += 1
         if START_NRE_ON:
             st["ST_TRUE" + ner] = global_feature_counter
@@ -285,7 +318,7 @@ def extract_features(training_sentences):
 def start():
     print("HW 3")
     startPerceptronCycles()
-    print("HW3 Complete in: {} sec.".format(time.process_time(),3))
+    print("HW3 Complete in: {} sec.".format(time.process_time(), 3))
 
 
 # start of HW 3
